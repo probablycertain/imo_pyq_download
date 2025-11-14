@@ -76,30 +76,32 @@ def download_problem_pdf(session, year, language_selectors, base_url, download_f
         else:
             print(f"  → Year {year} has no dropdown (defaults to English)")
         
-        # Submit POST request to problems.aspx
-        download_url = f"{base_url}problems.aspx"
+        # Submit POST request to download_file.aspx with dummy.pdf parameter
+        # This is the actual endpoint the browser uses
+        download_url = f"{base_url}download_file.aspx?file=dummy.pdf"
         response = session.post(download_url, data=form_data, timeout=30)
         
         # Check if we got a PDF back
         content_type = response.headers.get('content-type', '')
         content_length = len(response.content)
         
-        # A real PDF should be larger than 75KB and have the right content type
-        if content_length > 100000 or 'application/pdf' in content_type:
-            # Additional check: PDFs start with %PDF
-            if response.content.startswith(b'%PDF'):
-                filename = f"IMO_{year}_Problems_English.pdf"
-                filepath = os.path.join(download_folder, filename)
-                
-                with open(filepath, 'wb') as f:
-                    f.write(response.content)
-                print(f"✓ Successfully downloaded: {filename} ({content_length} bytes)")
-                return True
-            else:
-                print(f"✗ Response for year {year} is not a valid PDF")
-                return False
+        # Additional check: PDFs start with %PDF
+        if response.content.startswith(b'%PDF'):
+            filename = f"IMO_{year}_Problems_English.pdf"
+            filepath = os.path.join(download_folder, filename)
+            
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
+            print(f"✓ Successfully downloaded: {filename} ({content_length} bytes)")
+            return True
         else:
-            print(f"✗ Could not download problems for year {year} (response size: {content_length} bytes)")
+            # Not a valid PDF - save it for debugging
+            print(f"✗ Response for year {year} is not a valid PDF (size: {content_length} bytes)")
+            debug_filename = f"DEBUG_IMO_{year}_response.html"
+            debug_filepath = os.path.join(download_folder, debug_filename)
+            with open(debug_filepath, 'wb') as f:
+                f.write(response.content)
+            print(f"  → Saved response to {debug_filename} for debugging")
             return False
             
     except Exception as e:
@@ -117,7 +119,15 @@ def main():
     # Create a session to maintain cookies and state
     session = requests.Session()
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'DNT': '1',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Origin': base_url.rstrip('/'),
         'Referer': problems_url
     })
     
