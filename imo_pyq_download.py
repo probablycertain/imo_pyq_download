@@ -25,6 +25,7 @@ def extract_language_selectors(soup):
     """
     Extract all language selector names and their default values from the page
     Returns a dictionary like {'language2025': '2025/afr', 'language2024': '2024/afr', ...}
+    Only includes years that actually have a dropdown selector on the page.
     """
     selectors = {}
     
@@ -42,6 +43,7 @@ def extract_language_selectors(soup):
                 if first_option:
                     selectors[name] = first_option.get('value')
     
+    print(f"DEBUG: Found selectors for years: {[name.replace('language', '') for name in selectors.keys()]}")
     return selectors
 
 def download_problem_pdf(session, year, language_selectors, base_url, download_folder):
