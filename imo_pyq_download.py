@@ -24,55 +24,40 @@ def download_pdf(url, filename, download_folder):
 def download_problem_pdf(session, year, base_url, download_folder):
     """
     Download the problem PDF for a given year by submitting the form with English selected
+    The form sets DLFile to the language option value (e.g., "2025/eng")
     """
     try:
-        # Construct the download URL - this appears to be a form submission
-        # We need to POST to the page with the language parameter
-        download_url = f"{base_url}problems.aspx"
-        
-        # Prepare form data to request English version
-        form_data = {
-            'year': year,
-            'language': 'English'
-        }
-        
         print(f"Fetching English problems for year {year}...")
         
-        # Try to submit the form
-        response = session.post(download_url, data=form_data, timeout=30)
+        # Construct the DLFile value for English
+        dl_file = f"{year}/eng"
+        
+        # Prepare form data
+        form_data = {
+            'DLFile': dl_file
+        }
+        
+        # Submit POST request to problems.aspx
+        download_url = f"{base_url}problems.aspx"
+        response = session.post(download_url, data=form_data, timeout=30, stream=True)
         
         # Check if we got a PDF back
-        if response.headers.get('content-type', '').startswith('application/pdf'):
-            filename = f"IMO_{year}_Problems_English.pdf"
-            filepath = os.path.join(download_folder, filename)
-            
-            with open(filepath, 'wb') as f:
-                f.write(response.content)
-            print(f"✓ Successfully downloaded: {filename}")
-            return True
+        content_type = response.headers.get('content-type', '')
+        if 'application/pdf' in content_type or response.status_code == 200:
+            # Check if response has content
+            if len(response.content) > 0:
+                filename = f"IMO_{year}_Problems_English.pdf"
+                filepath = os.path.join(download_folder, filename)
+                
+                with open(filepath, 'wb') as f:
+                    f.write(response.content)
+                print(f"✓ Successfully downloaded: {filename}")
+                return True
+            else:
+                print(f"✗ Empty response for year {year}")
+                return False
         else:
-            # If POST didn't work, try constructing a GET URL
-            # The actual URL pattern might be different
-            possible_urls = [
-                f"{base_url}problems/IMO{year}.pdf",
-                f"{base_url}year_info.aspx?year={year}&language=English",
-            ]
-            
-            for url in possible_urls:
-                try:
-                    response = session.get(url, timeout=30)
-                    if response.status_code == 200 and response.headers.get('content-type', '').startswith('application/pdf'):
-                        filename = f"IMO_{year}_Problems_English.pdf"
-                        filepath = os.path.join(download_folder, filename)
-                        
-                        with open(filepath, 'wb') as f:
-                            f.write(response.content)
-                        print(f"✓ Successfully downloaded: {filename}")
-                        return True
-                except:
-                    continue
-            
-            print(f"✗ Could not download problems for year {year}")
+            print(f"✗ Could not download problems for year {year} (not a PDF response)")
             return False
             
     except Exception as e:
@@ -87,10 +72,14 @@ def main():
     
     print(f"Downloading IMO PDFs to: {download_folder}\n")
     
-    # Create a session to maintain cookies
+    # Create a session to maintain cookies and state
     session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Referer': problems_url
+    })
     
-    # Fetch the main problems page
+    # Fetch the main problems page to establish session
     try:
         response = session.get(problems_url, timeout=30)
         response.raise_for_status()
@@ -150,7 +139,6 @@ def main():
     print("="*60 + "\n")
     
     # Now download the problem PDFs for years 1959-2025
-    # We need to reverse engineer how the download button works
     for row in rows:
         cells = row.find_all('td')
         if len(cells) < 3:
@@ -168,16 +156,31 @@ def main():
         if year_num < 1959 or year_num > 2025:
             continue
         
-        # Check if there's a language dropdown or English link in column 2
+        # Check if there's a language selector in column 2
         language_cell = cells[1]
+        select = language_cell.find('select')
         
-        # For now, we'll try to download the English version
-        if download_problem_pdf(session, year, base_url, download_folder):
-            downloaded += 1
+        # Check if English option exists (either as dropdown or text)
+        has_english = False
+        
+        if select:
+            # Has dropdown - check for English option
+            english_option = select.find('option', value=lambda x: x and x.endswith('/eng'))
+            if english_option:
+                has_english = True
+        elif 'English' in language_cell.get_text():
+            # Has "English" text (pre-selected)
+            has_english = True
+        
+        if has_english:
+            if download_problem_pdf(session, year, base_url, download_folder):
+                downloaded += 1
+            else:
+                failed += 1
+            
+            time.sleep(1)  # Be polite to the server
         else:
-            failed += 1
-        
-        time.sleep(1)  # Be polite to the server
+            print(f"⊘ Skipping year {year} - English not available")
     
     # Summary
     print(f"\n{'='*60}")
