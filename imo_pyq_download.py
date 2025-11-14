@@ -21,10 +21,33 @@ def download_pdf(url, filename, download_folder):
         print(f"✗ Failed to download {filename}: {str(e)}")
         return False
 
-def download_problem_pdf(session, year, base_url, download_folder):
+def extract_language_selectors(soup):
+    """
+    Extract all language selector names and their default values from the page
+    Returns a dictionary like {'language2025': '2025/afr', 'language2024': '2024/afr', ...}
+    """
+    selectors = {}
+    
+    # Find all select elements with names starting with 'language'
+    for select in soup.find_all('select'):
+        name = select.get('name')
+        if name and name.startswith('language'):
+            # Get the selected option value (the one with selected="selected")
+            selected_option = select.find('option', selected=True)
+            if selected_option:
+                selectors[name] = selected_option.get('value')
+            else:
+                # If no option is marked as selected, get the first one
+                first_option = select.find('option')
+                if first_option:
+                    selectors[name] = first_option.get('value')
+    
+    return selectors
+
+def download_problem_pdf(session, year, language_selectors, base_url, download_folder):
     """
     Download the problem PDF for a given year by submitting the form with English selected
-    The form sets DLFile to the language option value (e.g., "2025/eng")
+    Includes all language selector values as required by the form
     """
     try:
         print(f"Fetching English problems for year {year}...")
@@ -32,32 +55,41 @@ def download_problem_pdf(session, year, base_url, download_folder):
         # Construct the DLFile value for English
         dl_file = f"{year}/eng"
         
-        # Prepare form data
-        form_data = {
-            'DLFile': dl_file
-        }
+        # Start with all the language selectors (with their default values)
+        form_data = language_selectors.copy()
+        
+        # Set DLFile to the year/language we want to download
+        form_data['DLFile'] = dl_file
+        
+        # Also update the language selector for this specific year to English
+        year_selector_name = f"language{year}"
+        if year_selector_name in form_data:
+            form_data[year_selector_name] = dl_file
         
         # Submit POST request to problems.aspx
         download_url = f"{base_url}problems.aspx"
-        response = session.post(download_url, data=form_data, timeout=30, stream=True)
+        response = session.post(download_url, data=form_data, timeout=30)
         
         # Check if we got a PDF back
         content_type = response.headers.get('content-type', '')
-        if 'application/pdf' in content_type or response.status_code == 200:
-            # Check if response has content
-            if len(response.content) > 0:
+        content_length = len(response.content)
+        
+        # A real PDF should be larger than 75KB and have the right content type
+        if content_length > 100000 or 'application/pdf' in content_type:
+            # Additional check: PDFs start with %PDF
+            if response.content.startswith(b'%PDF'):
                 filename = f"IMO_{year}_Problems_English.pdf"
                 filepath = os.path.join(download_folder, filename)
                 
                 with open(filepath, 'wb') as f:
                     f.write(response.content)
-                print(f"✓ Successfully downloaded: {filename}")
+                print(f"✓ Successfully downloaded: {filename} ({content_length} bytes)")
                 return True
             else:
-                print(f"✗ Empty response for year {year}")
+                print(f"✗ Response for year {year} is not a valid PDF")
                 return False
         else:
-            print(f"✗ Could not download problems for year {year} (not a PDF response)")
+            print(f"✗ Could not download problems for year {year} (response size: {content_length} bytes)")
             return False
             
     except Exception as e:
@@ -88,6 +120,11 @@ def main():
         return
     
     soup = BeautifulSoup(response.content, 'html.parser')
+    
+    # Extract all language selectors and their default values
+    print("Extracting form data from page...")
+    language_selectors = extract_language_selectors(soup)
+    print(f"Found {len(language_selectors)} language selectors\n")
     
     # Find the table with problems
     table = soup.find('table')
@@ -173,7 +210,7 @@ def main():
             has_english = True
         
         if has_english:
-            if download_problem_pdf(session, year, base_url, download_folder):
+            if download_problem_pdf(session, year, language_selectors, base_url, download_folder):
                 downloaded += 1
             else:
                 failed += 1
