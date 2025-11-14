@@ -49,7 +49,8 @@ def extract_language_selectors(soup):
 def download_problem_pdf(session, year, language_selectors, base_url, download_folder):
     """
     Download the problem PDF for a given year by submitting the form with English selected
-    Includes all language selector values as required by the form
+    Includes all language selector values as required by the form.
+    Only includes selectors that exist on the page (years with dropdowns).
     """
     try:
         print(f"Fetching English problems for year {year}...")
@@ -57,16 +58,23 @@ def download_problem_pdf(session, year, language_selectors, base_url, download_f
         # Construct the DLFile value for English
         dl_file = f"{year}/eng"
         
-        # Start with all the language selectors (with their default values)
-        form_data = language_selectors.copy()
+        # IMPORTANT: DLFile must be first in the form data
+        # Create form_data with DLFile first, then add all language selectors
+        form_data = {'DLFile': dl_file}
         
-        # Set DLFile to the year/language we want to download
-        form_data['DLFile'] = dl_file
+        # Add all the language selectors (with their default values)
+        # This only includes years that have dropdowns
+        for key, value in language_selectors.items():
+            form_data[key] = value
         
-        # Also update the language selector for this specific year to English
+        # Update the language selector for this specific year to English
+        # (only if this year has a dropdown selector)
         year_selector_name = f"language{year}"
         if year_selector_name in form_data:
             form_data[year_selector_name] = dl_file
+            print(f"  → Setting {year_selector_name} to {dl_file}")
+        else:
+            print(f"  → Year {year} has no dropdown (defaults to English)")
         
         # Submit POST request to problems.aspx
         download_url = f"{base_url}problems.aspx"
