@@ -21,28 +21,63 @@ def download_pdf(url, filename, download_folder):
         print(f"✗ Failed to download {filename}: {str(e)}")
         return False
 
-def get_english_pdf_url(year_url, base_url):
+def download_problem_pdf(session, year, base_url, download_folder):
     """
-    For pre-2006 years, fetch the year page and find the English PDF download link
+    Download the problem PDF for a given year by submitting the form with English selected
     """
     try:
-        response = requests.get(year_url, timeout=30)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
+        # Construct the download URL - this appears to be a form submission
+        # We need to POST to the page with the language parameter
+        download_url = f"{base_url}problems.aspx"
         
-        # Look for download links - typically in a form or direct link
-        # The actual structure may vary, so we'll look for PDF links
-        pdf_links = soup.find_all('a', href=lambda x: x and '.pdf' in x.lower())
+        # Prepare form data to request English version
+        form_data = {
+            'year': year,
+            'language': 'English'
+        }
         
-        if pdf_links:
-            # Return the first PDF link found (usually the English version)
-            pdf_url = pdf_links[0].get('href')
-            return urljoin(base_url, pdf_url)
+        print(f"Fetching English problems for year {year}...")
         
-        return None
+        # Try to submit the form
+        response = session.post(download_url, data=form_data, timeout=30)
+        
+        # Check if we got a PDF back
+        if response.headers.get('content-type', '').startswith('application/pdf'):
+            filename = f"IMO_{year}_Problems_English.pdf"
+            filepath = os.path.join(download_folder, filename)
+            
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
+            print(f"✓ Successfully downloaded: {filename}")
+            return True
+        else:
+            # If POST didn't work, try constructing a GET URL
+            # The actual URL pattern might be different
+            possible_urls = [
+                f"{base_url}problems/IMO{year}.pdf",
+                f"{base_url}year_info.aspx?year={year}&language=English",
+            ]
+            
+            for url in possible_urls:
+                try:
+                    response = session.get(url, timeout=30)
+                    if response.status_code == 200 and response.headers.get('content-type', '').startswith('application/pdf'):
+                        filename = f"IMO_{year}_Problems_English.pdf"
+                        filepath = os.path.join(download_folder, filename)
+                        
+                        with open(filepath, 'wb') as f:
+                            f.write(response.content)
+                        print(f"✓ Successfully downloaded: {filename}")
+                        return True
+                except:
+                    continue
+            
+            print(f"✗ Could not download problems for year {year}")
+            return False
+            
     except Exception as e:
-        print(f"Error fetching year page: {str(e)}")
-        return None
+        print(f"✗ Failed to download problems for year {year}: {str(e)}")
+        return False
 
 def main():
     # Setup
@@ -52,9 +87,12 @@ def main():
     
     print(f"Downloading IMO PDFs to: {download_folder}\n")
     
+    # Create a session to maintain cookies
+    session = requests.Session()
+    
     # Fetch the main problems page
     try:
-        response = requests.get(problems_url, timeout=30)
+        response = session.get(problems_url, timeout=30)
         response.raise_for_status()
     except Exception as e:
         print(f"Error fetching main page: {str(e)}")
@@ -73,6 +111,11 @@ def main():
     downloaded = 0
     failed = 0
     
+    print("="*60)
+    print("PHASE 1: Downloading Shortlist PDFs (2006-2024)")
+    print("="*60 + "\n")
+    
+    # First, download all Shortlist PDFs (2006-2024)
     for row in rows:
         cells = row.find_all('td')
         if len(cells) < 4:
@@ -84,7 +127,6 @@ def main():
             continue
         
         year = year_link.text.strip()
-        year_url = urljoin(base_url, year_link.get('href'))
         
         # Check for Shortlist PDF (column 4, for years 2006-2024)
         shortlist_cell = cells[3]
@@ -102,36 +144,47 @@ def main():
                 failed += 1
             
             time.sleep(1)  # Be polite to the server
+    
+    print("\n" + "="*60)
+    print("PHASE 2: Downloading Problem PDFs (1959-2025)")
+    print("="*60 + "\n")
+    
+    # Now download the problem PDFs for years 1959-2025
+    # We need to reverse engineer how the download button works
+    for row in rows:
+        cells = row.find_all('td')
+        if len(cells) < 3:
+            continue
         
-        # Check for English version (column 2, for older years)
-        english_cell = cells[1]
-        english_link = english_cell.find('a', string='English')
+        # Extract year
+        year_link = cells[0].find('a')
+        if not year_link:
+            continue
         
-        if english_link:
-            # For pre-2006 years, we need to visit the year page
-            # and find the actual PDF download link
-            print(f"Fetching English PDF for year {year}...")
-            
-            pdf_url = get_english_pdf_url(year_url, base_url)
-            
-            if pdf_url:
-                filename = f"IMO_{year}_Problems_English.pdf"
-                if download_pdf(pdf_url, filename, download_folder):
-                    downloaded += 1
-                else:
-                    failed += 1
-            else:
-                print(f"✗ Could not find PDF link for year {year}")
-                failed += 1
-            
-            time.sleep(1)  # Be polite to the server
+        year = year_link.text.strip()
+        year_num = int(year)
+        
+        # Only process years 1959-2025
+        if year_num < 1959 or year_num > 2025:
+            continue
+        
+        # Check if there's a language dropdown or English link in column 2
+        language_cell = cells[1]
+        
+        # For now, we'll try to download the English version
+        if download_problem_pdf(session, year, base_url, download_folder):
+            downloaded += 1
+        else:
+            failed += 1
+        
+        time.sleep(1)  # Be polite to the server
     
     # Summary
-    print(f"\n{'='*50}")
+    print(f"\n{'='*60}")
     print(f"Download Summary:")
     print(f"Successfully downloaded: {downloaded}")
     print(f"Failed: {failed}")
-    print(f"{'='*50}")
+    print(f"{'='*60}")
 
 if __name__ == "__main__":
     main()
